@@ -1,0 +1,33 @@
+A1:
+1.栈队列是先进先出, 存储的是值类型；堆存的是引用类型。
+2.这个不清楚，应该是不一定，还有可能在堆上。
+3. a. 一个int类型的值类型，在一个class中，因为这个class是引用类型new的适合被分配到了堆上，那么在其中的int也会在堆上。b. 还有就是Debug.Log($"{a}"); 这个a是值类型，但是a在Debug中被转化为string也是一次装箱操作，可能会被放到堆内存中。
+A2:
+1.存在栈中。
+2.arr本身存的是元素的地址。
+3.存在内存中。
+A3:
+1. score转为string一次
+2. Score字符连接一次
+A4:说实话这个不知道
+A5:
+1.可能在被class这类包括的情况下，这样struct就变成了在堆内存中造成性能问题。
+2.在List<struct>中被重复的new和destory。
+
+B1:分配量差多少？耗时差多少？这个我不会
+B2:分配量差多少？耗时差多少？这个我不会
+B3:分配量差多少？耗时差多少？这个我不会
+B4:分配量差多少？耗时差多少？这个我不会
+
+C1: 不合理的，我当时只是为了让一个接口有AudioSource的属性，这样继承他的class就自动要定义一个AudioSource，每次get都要GetComponent对性能有影响。代码已经修改了。顺便说下LocalAudioBase路径你写错了，正确的是：`D:\Project\Unity\CNCore\Assets\CNCore\Scripts\Frame\Audio\Base\LocalAudioBase.cs`
+C2: 因为我写的是audioPlayer = GetComponent<AudioSource>();在Start里面，但是如果这个挂载的GameObject没有AudioSource，那么就会使null在下面的使用中就会出现内存溢出的问题，所以我改成了：
+        if (gameObject.TryGetComponent(out AudioSource audio))
+            audioPlayer = audio;
+        else
+            audioPlayer = gameObject.AddComponent<AudioSource>();
+如果修改NetworkAudioBase，也可以：
+        if (gameObject.TryGetComponent(out AudioSource audio))
+            audioPlayer = audio;
+        else
+            audioPlayer = gameObject.AddComponent<AudioSource>();
+在Start里面去做。
