@@ -1,0 +1,129 @@
+B1:
+循环 100 万次 `object o = i;`（在循环内真实发生捕获，比如存进一个数组每 10000 个取一个): 
+分配了约9.6MB，用时31.2ms
+循环 100 万次 `int j = i;` 分配了 0MB，用时1.2ms
+所以分配量差了9.6MB，耗时差30.0ms
+B2：
+`List<int>.Add` 100 万次 分配了8.4MB，用时：6.1ms
+`List<object>.Add` 100 万次（装箱）分配了 39.6MB，用时75ms
+所以分配差了约30MB，用时差约70ms
+B3:
+`string s = a + b;` 循环 1 万次代码：
+        string s = "";
+        long begin = System.GC.GetTotalMemory(true);
+        Stopwatch sw = Stopwatch.StartNew();
+
+        for (int i = 0; i < 10000; ++i)
+        {
+            s += i.ToString();
+        }
+
+        sw.Stop();
+        long end = GC.GetTotalMemory(false);
+        UnityEngine.Debug.Log("分配了" + (end - begin) / 1000000.0f + " MB");
+        UnityEngine.Debug.Log("用时：" + sw.Elapsed.TotalMilliseconds);
+分配了：8.9MB，用时：116ms
+`StringBuilder` 同样拼 1 万次代码：
+    void Start()
+    {
+        string s = "";
+        long begin = System.GC.GetTotalMemory(true);
+        Stopwatch sw = Stopwatch.StartNew();
+
+        for (int i = 0; i < 10000; ++i)
+        {
+            StringBuilder sb = new StringBuilder(s);
+            sb.Append(i.ToString());
+            s = sb.ToString();
+        }
+
+        sw.Stop();
+        long end = GC.GetTotalMemory(false);
+        UnityEngine.Debug.Log("分配了" + (end - begin) / 1000000.0f + " MB");
+        UnityEngine.Debug.Log("用时：" + sw.Elapsed.TotalMilliseconds);
+    }
+分配了：4.5MB，用时：306ms
+分配差约4.5MB
+
+B4：
+`foreach (List<int>)`遍历 1 万次代码：
+ List<int> ls = new List<int>(1000);
+ long begin = System.GC.GetTotalMemory(true);
+ Stopwatch sw = Stopwatch.StartNew();
+
+ foreach (var i in ls)
+ { 
+     
+ }
+
+ sw.Stop();
+ long end = GC.GetTotalMemory(false);
+ UnityEngine.Debug.Log("分配了" + (end - begin) / 1000000.0f + " MB");
+分配了0MB
+
+`foreach (IEnumerable<int> 装同一个 List<int>)` 遍历 1 万次代码：
+ IEnumerable<int> ls = new List<int>(1000);
+ long begin = System.GC.GetTotalMemory(true);
+ Stopwatch sw = Stopwatch.StartNew();
+
+ foreach (var i in ls)
+ { 
+     
+ }
+
+ sw.Stop();
+ long end = GC.GetTotalMemory(false);
+ UnityEngine.Debug.Log("分配了" + (end - begin) / 1000000.0f + " MB");
+分配了0MB
+
+所以分配差0MB
+
+B5：
+代码：
+        for (int i = 0; i < 2; ++i)
+        {
+            long begin = System.GC.GetTotalMemory(true);
+            object o = i;
+            long end = GC.GetTotalMemory(false);
+            UnityEngine.Debug.Log("object o = i; 分配了" + (end - begin) / 1000000.0f + " MB");
+
+            begin = System.GC.GetTotalMemory(true);
+            UnityEngine.Debug.Log($"{i}");
+            end = GC.GetTotalMemory(false);
+            UnityEngine.Debug.Log("$\"{i}\" 分配了" + (end - begin) / 1000000.0f + " MB");
+
+            begin = System.GC.GetTotalMemory(true);
+            UnityEngine.Debug.Log("x" + i);
+            end = GC.GetTotalMemory(false);
+            UnityEngine.Debug.Log("\"x\" + i 分配了" + (end - begin) / 1000000.0f + " MB");
+
+            begin = System.GC.GetTotalMemory(true);
+            UnityEngine.Debug.Log(i.ToString());
+            end = GC.GetTotalMemory(false);
+            UnityEngine.Debug.Log("i.ToString() 分配了" + (end - begin) / 1000000.0f + " MB");
+        }
+分配全都是0MB
+
+B5-2：
+代码：
+        int a = 5; 
+        object box = a; 
+        a = 100;
+        UnityEngine.Debug.Log(box);
+打印的是5
+
+A1：
+栈存值类型，堆存引用类型，值类型不一定在栈上也可能在堆上。
+举例：a. 值类型的int在class中被new了，那么因为class在堆内存上，所以int也在堆内存上
+b. Debug.Log(a); 因为Log的参数是一个object，所以a进行了装箱成object 被分配到了堆内存上。
+
+A2:
+new分配发生在堆上。arr本身存的是在堆内存上的引用。数组里10个int存在堆内存上
+
+A5：
+a. 复杂的大struct复制会造成性能问题。b. struct的读取需要clone也会影响性能问题。
+
+最后一题术语订正我不会，但是我查了资料：
+NRE: null，空引用
+OOM:内存不足异常
+StackOverflowException：栈溢出，栈空间耗尽，通常原因为无限递归。
