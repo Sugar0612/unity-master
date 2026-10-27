@@ -1,0 +1,136 @@
+B3-F:
+s += i.ToString():
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+
+        string s = "";
+        for (int i = 0; i < 10000; ++i)
+        {
+            s += i.ToString();
+        }
+
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 4349952 B，每次 435.0 B，耗时 101.82 ms
+
+StringBuilder:
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+
+        StringBuilder sb = new StringBuilder();
+        string s = "";
+        for (int i = 0; i < 10000; ++i)
+        {
+            sb.Append(i.ToString());
+        }
+        s = sb.ToString();
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 167936 B，每次 16.8 B，耗时 1.51 ms
+
+B4-F：
+list.Add(i)：        List<int> ls = new List<int>();
+
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            ls.Add(i);
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 151552 B，每次 15.2 B，耗时 0.09 ms
+
+IEnumerable<int>:
+        IEnumerable<int> ls = new List<int>();
+
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            ls.Append(i);
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 102400 B，每次 10.2 B，耗时 0.61 ms
+
+B5-F:
+$"{i}"：
+        long sink = 0;
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            string s = $"{i}"; sink += s.Length;
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 3.44 ms
+
+"x" + i:
+        long sink = 0;
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            string s = "x" + i; sink += s.Length;
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 2.11 ms
+
+i.ToString()：
+        long sink = 0;
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            string s = i.ToString(); sink += s.Length;
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 1.04 ms
+
+B1-Q:一句话自然 GC 解释：GC就是自动垃圾回收，当进行装箱操作，或者申请推内存后，会产生GC Alloc, 当该对象引用计数为0后就会被统一的垃圾回收掉。
+报你第二次（false 版）的 B1 数字：
+object o = i; 我预测的是24MB，但是我自己写的测试代码：
+        long sink = 0;
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 1000000; ++i)
+        {
+            object o = i;
+            sink += (int)o;
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 2609152 B，每次 2.6 B，耗时 32.39 ms
+
+int j = i; 这个我预测的是0MB，我的测试代码：
+        long sink = 0;
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 1000000; ++i)
+        {
+            int j = i;
+            sink += j;
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 1.29 ms
