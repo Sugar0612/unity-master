@@ -1,0 +1,92 @@
+B4-G:
+ List<int>:
+        List<int> ls = new List<int>();
+        for (int i = 0; i < 1000; ++i) ls.Add(i);
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            foreach (var j in ls)
+            {
+
+            }
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 77.40 ms
+UnityEngine.Debug:Log (object)
+TestScript:Start () (at Assets/TestScript.cs:31)
+
+IEnumerable<int>：
+        IEnumerable<int> ls = new List<int>();
+        for (int i = 0; i < 1000; ++i) ls.Append(i);
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            foreach (var j in ls)
+            {
+
+            }
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 0.66 ms
+UnityEngine.Debug:Log (object)
+TestScript:Start () (at Assets/TestScript.cs:31)
+
+B5-G：
+$"{i}"：
+        long sink = 0;
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            string s = $"{i}"; sink += s.Length;
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 3.40 ms
+UnityEngine.Debug:Log (object)
+TestScript:Start () (at Assets/TestScript.cs:27)
+
+"x" + i:
+        long sink = 0;
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            string s = "x" + i; sink += s.Length;
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 2.05 ms
+UnityEngine.Debug:Log (object)
+TestScript:Start () (at Assets/TestScript.cs:27)
+
+i.ToString()：
+        long sink = 0;
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; ++i)
+        {
+            string s = i.ToString(); sink += s.Length;
+        }
+        
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 1.01 ms
+UnityEngine.Debug:Log (object)
+TestScript:Start () (at Assets/TestScript.cs:27)
+
+B1-G:
+说白了就是被自动的GC了，9.6MB/2.6MB 是循环了1百万次，分配的太多所以自动GC，只留下了最后一次的数值，24MB那次是十万次，刚才没有触发GC，全部保留了下来。
