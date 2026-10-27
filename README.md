@@ -22,7 +22,7 @@
 
 1. [docs/01-训练计划.md](docs/01-训练计划.md) —— 路线图与规则（教练/训练者都先读这个）
 2. [docs/02-进度看板.md](docs/02-进度看板.md) —— 走到哪一关了
-3. [modules/phase1/W01-装箱与内存.md](modules/phase1/W01-装箱与内存.md) —— 当前任务卡
+3. [modules/phase1/W02-委托事件闭包/任务卡.md](modules/phase1/W02-委托事件闭包/任务卡.md) —— 当前任务卡（W2）
 
 ## 目录结构
 
