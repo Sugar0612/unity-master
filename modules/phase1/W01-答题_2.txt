@@ -1,0 +1,149 @@
+1. B1:
+因为int值类型装箱object大约是24个字节，所以预测100万次后，大约分配24MB
+int j = i;是值类型到值类型，所以预测是0MB
+B2：
+List<int>.add理论上应该是4字节，但是list<int>要扩容所以要翻倍8字节，100万次就是8MB
+LIst<Object>.Add, 首先int->object要24字节，List装object要8字节因为扩容翻倍所以16字节，所以预测100万次40MB
+B3:
+string a = "a", b = "b";
+string s = a + b; 应该是0MB
+   string a = "a", b = "b";
+   for (int i = 0; i < 10000; ++i)
+   {
+       string s = a + b;
+   }
+StringBuilder 也是0MB
+B4:
+按照要求foreach (List<int>)：
+       for(int i = 0; i < 10000; ++i)
+       {
+           foreach (var j in ll)
+           {
+
+           }
+       }
+如果是这样的那就是0MB
+
+那么 IEnumerable<int> ll = new List<int>(100);
+ for (int i = 0; i < 100; ++i) { ll.Append(i); }
+ GC.Collect();                                // 清场
+ long before = GC.GetTotalMemory(false);      // 快照①
+ var sw = Stopwatch.StartNew();
+
+ //string a = "a", b = "b";
+ //for (int i = 0; i < 10000; ++i)
+ //{
+ //    string s = a + b;
+ //}
+
+ for(int i = 0; i < 10000; ++i)
+ {
+     foreach (var j in ll)
+     {
+
+     }
+ }
+也是0MB
+
+B5：如果是100万次
+`object o = i;`：8MB
+Debug.Log($"{i}") 0MB
+Debug.Log("x" + i`) 0MB
+Debug.Log(i.ToString()) 0MB
+
+2. 因为int值类型装箱object大约是24个字节，所以预测100万次后，大约分配24MB
+int j = i;是值类型到值类型，所以预测是0MB
+为什么两次数值不同？因为我发现我写的脚本是这样的：
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+	xxx
+        sw.Stop();
+        long after = GC.GetTotalMemory(true);       // 快照②
+你写的是这样的：
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+	xxx
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+第二次我用了你的，所以是这样的结果。
+
+3.B3-R的预测我已经预测过了，下来我放代码：
+string s = a + b;的：
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+
+        string a = "a", b = "b";
+        for (int i = 0; i < 10000; ++i)
+        {
+            string s = a + b;
+        }
+
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 0 B，每次 0.0 B，耗时 1.00 ms
+
+StringBuilder：
+        StringBuilder sb = new StringBuilder();
+        GC.Collect();                                // 清场
+        long before = GC.GetTotalMemory(false);      // 快照①
+        var sw = Stopwatch.StartNew();
+
+        string a = "a", b = "b";
+        for (int i = 0; i < 10000; ++i)
+        {
+            sb.Append(a);
+            sb.Append(b);
+            string s = sb.ToString();
+        }
+
+        sw.Stop();
+        long after = GC.GetTotalMemory(false);       // 快照②
+总 7204864 B，每次 7.2 B，耗时 63.95 ms
+
+B4-R：
+按照要求foreach (List<int>)：
+       for(int i = 0; i < 10000; ++i)
+       {
+           foreach (var j in ll)
+           {
+
+           }
+       }
+如果是这样的那就是0MB
+
+那么 IEnumerable<int> ll = new List<int>(100);
+ for (int i = 0; i < 100; ++i) { ll.Append(i); }
+ GC.Collect();                                // 清场
+ long before = GC.GetTotalMemory(false);      // 快照①
+ var sw = Stopwatch.StartNew();
+
+ //string a = "a", b = "b";
+ //for (int i = 0; i < 10000; ++i)
+ //{
+ //    string s = a + b;
+ //}
+
+ for(int i = 0; i < 10000; ++i)
+ {
+     foreach (var j in ll)
+     {
+
+     }
+ }
+也是0MB
+
+B5-R：
+object o = i;：总 2715648 B，每次 2.7 B，耗时 32.39 ms
+$"{i}"`：总 90112 B，每次 0.1 B，耗时 4066.19 ms
+"x" + i`：总 3117056 B，每次 3.1 B，耗时 2534.33 ms
+i.ToString()：总 7106560 B，每次 7.1 B，耗时 1194.54 ms
+
+A1：
+栈存值类型本身和引用类型变量地址，堆存对象，值类型不一定在栈上也可能在堆上。
+举例：a. 值类型的int在class中被new了，那么因为class在堆内存上，所以int也在堆内存上
+b. Debug.Log(a); 因为Log的参数是一个object，所以a进行了装箱成object 被分配到了堆内存上。
+
+A2:
+new分配发生在堆上。arr本身在栈上，存的是引用类型的地址引用。数组里10个int存在堆内存上
+
