@@ -1,0 +1,219 @@
+A1:
+dalegate他只是一个字段，并不是一个类型，是一个函数指针，有点像函数版本的class，可以去定义一个指针的结构。
+Action<T> 是我常用的类型，他多数让我用来做一个类的事件，我通常会 public event Action onEvent;这样去定义，但是他不能有返回值。
+Func<T, TResult> 他用的很少，好像是可以有返回值，<>中的最后一位类型就是返回值的类型
+Predicate<T> 这个知道但是没用过，项目中几乎不会用到这个。
+
+委托是一个类型。
+
+一个委托变量里装了多个方法时叫多播
+调用时所有的方法都会被调用。
+
+A2：
+有event的在class内可以正常使用 +=； -=；Invoke; 在class外只能+=； -=；安全性高。
+没有event的在任何地方都可以+=;-=;Invoke;
+
+A3:
+点击一次按钮输出 333，因为记录的是i的地址应该是，所以真正用的时候，循环已经出来了，哪个时候i就是等于3，所以就是333
+方法一：
+        for (int i = 0; i < 3; ++i)
+        {
+            int tmp = i;
+            onClicked += () => { Debug.Log(tmp); };
+        }
+方法二：
+        for (int i = 0; i < 3; ++i)
+        {
+            string str = i.ToString();
+            onClicked += () => { Debug.Log(str); };
+        }
+外循环tmp，最终的答案是222，原因其实也是一样的，只不过tmp因为循环只能拿到i等于2时的值。
+
+A4：
+这个我不太清楚，但是大概能想来，首先他不会被GC，并且静态事件依旧持有它的引用，但是下次事件触发大概率报错，报空这样，如果防止呢？1.那就是最好不要把monobehaviour绑定在静态事件上。2. 那就是在这个monobehaviour的OnDestroy中里面写关于静态事件的解绑操作。
+
+A5：
+这个我也不是很清楚，感觉就是在为了保存这个sink，因为lambda捕获了他，所以相当于创造了堆内存保存这个sink。
+
+B1：
+public struct PlayerDied 
+{
+    public int Id; 
+
+    public void SetId(int id)
+    {
+        Id = id;
+    }
+}
+
+public struct MonsterDied
+{
+    public int id;
+
+    public void SetMonsterId(int id_)
+    {
+        id = id_;
+    }
+}
+
+
+public struct PlayerA
+{
+    public float a;
+    public string b;
+
+    public void Set(int aa, string bb)
+    {
+        a = aa;
+        b = bb;
+    }
+}
+
+public static class EventBus<T, S> where T : struct
+{
+    public delegate void OnEvent(S arg);
+
+    private static event OnEvent _event;
+
+    /// <summary>
+    /// 订阅
+    /// </summary>
+    /// <param name="eventType"></param>
+    /// <param name="action"></param>
+    public static void Subscribe(OnEvent event_) { _event += event_; }
+
+    public static void UnSubscribe(OnEvent event_) { _event -= event_; }
+
+    public static void Publish(S arg) { _event.Invoke(arg); }
+}
+
+public static class EventBus<T, S, S1> where T : struct
+{
+    public delegate void OnEvent(S arg, S1 arg_1);
+
+    private static event OnEvent _event;
+
+    /// <summary>
+    /// 订阅
+    /// </summary>
+    /// <param name="eventType"></param>
+    /// <param name="action"></param>
+    public static void Subscribe(OnEvent event_) { _event += event_; }
+
+    public static void UnSubscribe(OnEvent event_) { _event -= event_; }
+
+    public static void Publish(S arg, S1 arg_1) { _event.Invoke(arg, arg_1); }
+}
+
+
+public class TestScript : MonoBehaviour
+{
+    public enum EventType { Normal, Warnong, Error }
+
+    //private Dictionary<EventType, Action<T>> _eventDic = new Dictionary<EventType, Action<T>>();
+
+    private PlayerDied died = new PlayerDied();
+
+    private MonsterDied monsterDied = new MonsterDied();
+
+    private PlayerA a = new PlayerA();
+
+    void Start()
+    {
+        EventBus<PlayerDied, int>.Subscribe(died.SetId);
+        EventBus<PlayerDied, int>.Subscribe(monsterDied.SetMonsterId);
+        EventBus<PlayerDied, int>.Publish(1);
+
+        EventBus<PlayerA, int, string>.Subscribe(a.Set);
+        EventBus<PlayerA, int, string>.Publish(1, "");
+    }
+
+B2：
+实验1：333，如果是 int tmp = i; 在for外定义，那就是222，因为就像我上面说的，333是因为直接拿的i，i最后一次加一就等于3，然后循环结束了。222是因为 tmp = i；这一步在i = 2后就没有在进入for了，因为i = 3的时候跳出了，所以无法赋值。
+
+实验2：
+预测： 捕获x的分配量：40000B，不捕获：0B
+测试代码：
+public class TestScript1 : MonoBehaviour
+{
+    private int _count = 10000;
+
+    void Start()
+    {
+        CaptureMethod();
+
+        NonCaptureMethod();
+    }
+
+    private void CaptureMethod()
+    {
+        GC.Collect();
+        long begin = GC.GetTotalMemory(false);
+
+        long sink = 0, x = 10;
+        for (int i = 0; i < _count; ++i)
+        {
+            Action a = () => sink += x;
+            a();
+        }
+
+        long end = GC.GetTotalMemory(false);
+
+        UnityEngine.Debug.Log("CaptureMethod 分配了：" + (end - begin) + "B");
+    }
+
+    private void NonCaptureMethod()
+    {
+        GC.Collect();
+        long begin = GC.GetTotalMemory(false);
+
+        for (int i = 0; i < _count; ++i)
+        {
+            Action a = () => { };
+            a();
+        }
+
+        long end = GC.GetTotalMemory(false);
+
+        UnityEngine.Debug.Log("NonCaptureMethod 分配了：" + (end - begin) + "B");
+    }
+}
+最后的结果：
+CaptureMethod 分配了：0B
+UnityEngine.Debug:Log (object)
+TestScript1:CaptureMethod () (at Assets/TestScript1.cs:37)
+TestScript1:Start () (at Assets/TestScript1.cs:18)
+
+NonCaptureMethod 分配了：0B
+UnityEngine.Debug:Log (object)
+TestScript1:NonCaptureMethod () (at Assets/TestScript1.cs:53)
+TestScript1:Start () (at Assets/TestScript1.cs:20)
+
+E:\Project\SNNU\Assets\Game\UI\Scripts\Controls\ControlBase.cs 没有找到
+
+C：这个和我现在写的区别在于他定义了一个interface：IEventBus，所有要用EventBus的事件，都需要去继承IEventBus才可以用，想到与是在业务和EventBus之间做了一层隔离：
+比如：
+public class GoldChangedEvent : IEventBus<int>
+{
+}
+
+public class GoldUI : MonoBehaviour
+{
+    private void OnEnable()
+    {
+        EventBus<GoldChangedEvent, int>.Subscribe(OnGoldChanged);
+    }
+
+    private void OnDisable()
+    {
+        EventBus<GoldChangedEvent, int>.UnSubscribe(OnGoldChanged);
+    }
+
+    private void OnGoldChanged(int gold)
+    {
+        Debug.Log($"当前金币数量：{gold}");
+    }
+}
+
+GoldUI业务代码不会直接和EventBus<EventType, T1>接触
+这个是差异也是我值得改进的地方。
