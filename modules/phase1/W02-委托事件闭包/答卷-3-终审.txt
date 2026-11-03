@@ -1,0 +1,154 @@
+B3-R2:
+修复了两个地方：
+1.       
+ private void OnEnable()
+        {
+            // onClickEnter += () => RaiseTrigger(InteractionTrigger.Selected);
+            // onHoverEnter += () => RaiseTrigger(InteractionTrigger.HoverEnter);
+            // onHoverExit += () => RaiseTrigger(InteractionTrigger.HoverExit);
+
+            onClickEnter += HandleClickEnter;
+            onHoverEnter += HandleHoverEnter;
+            onHoverExit  += HandleHoverExit;
+        }
+
+        private void OnDisable()
+        {
+            onClickEnter -= HandleClickEnter;
+            onHoverEnter -= HandleHoverEnter;
+            onHoverExit -= HandleHoverExit;
+        }
+
+        private void HandleClickEnter() => RaiseTrigger(InteractionTrigger.Selected);
+        private void HandleHoverEnter() => RaiseTrigger(InteractionTrigger.HoverEnter);
+        private void HandleHoverExit()  => RaiseTrigger(InteractionTrigger.HoverExit);
+        private void OnDestroy_1()      => RaiseTrigger(InteractionTrigger.ObjectDestroy);
+2.         private void OnDestroy()
+        {
+            //RaiseTrigger(InteractionTrigger.ObjectStart);
+            OnDestroy_1();
+        }
+所以说，说白了，就是我之前那样写是两个不同的函数进行 += 和 -=，并不能解决问题。也就是说+=注册的是A函数，但是-=是B函数，这两个都有问题。所以需要上面修改的那种方法去写来避免这个问题。
+
+2. B1-R补注：
+typeof(T) 一句话答案 什么意思我不懂，我不知道你想问什么。
+
+现在改成了：
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Text;
+using Unity.VisualScripting;
+using UnityEngine;
+using UnityEngine.InputSystem.LowLevel;
+
+public struct PlayerDied 
+{
+    public int Id; 
+}
+
+public struct MonsterDied
+{
+    public int id;
+}
+
+public static class EventBus<T> where T : struct
+{
+    private static Dictionary<Type, List<Delegate>> _routes = new Dictionary<Type, List<Delegate>>();
+
+    /// <summary>
+    /// 订阅
+    /// </summary>
+    /// <param name="eventType"></param>
+    /// <param name="action"></param>
+    public static void Subscribe(Action<T> handler) 
+    {
+        if (!_routes.TryGetValue(typeof(T), out var list))
+        {
+            list = new List<Delegate>();
+            _routes[typeof(T)] = list;
+        }
+
+        if (!list.Contains(handler))
+            list.Add(handler);
+    }
+
+    public static void UnSubscribe(Action<T> handler)
+    {
+        if (!_routes.TryGetValue(typeof(T), out var list))
+            return;
+
+        if (list.Contains(handler))
+        {
+            list.Remove(handler);
+            if (list.Count == 0)
+                _routes.Remove(typeof(T));
+        }
+    }
+
+    public static void Publish(in T evn)
+    {
+        if (!_routes.TryGetValue(typeof(T), out var list))
+            return;
+
+        for (int i = 0; i < list.Count; ++i)
+        {
+            ((Action<T>)list[i]).Invoke(evn);
+        }
+    }
+
+    public static void ClearAll() => _routes.Clear();
+
+    public static int RouteCount => _routes.Count;
+}
+
+
+public class TestScript : MonoBehaviour
+{
+    private PlayerDied died = new PlayerDied();
+
+    private MonsterDied monsterDied = new MonsterDied();
+
+    private void OnEnable()
+    {
+        died.Id = 12;
+
+        EventBus<PlayerDied>.Subscribe(ThePlayerIsDied);
+        //EventBus<PlayerDied>.Publish(died);
+
+        EventBus<MonsterDied>.Subscribe(TheMonsterDied);
+        //EventBus<MonsterDied>.Publish(monsterDied);
+
+        EventBus<PlayerDied>.UnSubscribe(ThePlayerIsDied);
+        EventBus<PlayerDied>.Publish(died);
+
+        EventBus<MonsterDied>.UnSubscribe(TheMonsterDied);
+        EventBus<PlayerDied>.Publish(died);
+    }
+
+    private void ThePlayerIsDied(PlayerDied player)
+    {
+        UnityEngine.Debug.Log($"player id: {player.Id} is dieth.");
+    }
+
+    private void TheMonsterDied(MonsterDied monster)
+    {
+        UnityEngine.Debug.Log($"monster id: {monster.id} is dieth.");
+    }
+
+    private void OnDisable()
+    {
+        EventBus<PlayerDied>.UnSubscribe(ThePlayerIsDied);
+        EventBus<MonsterDied>.UnSubscribe(TheMonsterDied);
+    }
+}
+则：退订后再 Publish 的 Console：空的，什么都没有。
+决定字典去留（删或换全局版）：留下。
+
+3. C-R补齐：
+差异 1 改述，应该改成两个都有类型保护，只不过方法不同。一个是struct + 字典，一个是interface标记。
+差异 3 誊写，新的Bus用了字典查找，换来的是ClearAll这种可以对全部的委托的方法
+旧的Bus则是不需要查找。
+思考题一句话啥意思？你每次说话都说一半。
