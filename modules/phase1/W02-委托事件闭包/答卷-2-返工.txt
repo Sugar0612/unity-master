@@ -1,0 +1,197 @@
+A4-R:
+僵尸方法的症状是，当一个Monobehaviour的一个方法绑定了一个静态的Event，然后这个对象自己销毁了，这个静态变量的Event上绑定的方法并没有销毁，甚至可以正常调用，但是调用的数值不会改变比如一些int，string变量会一直显示最后销毁的值，但是方法里面有关于场景的比如transform.position这些的时候会报错miss，而报空是直接在引擎中报错。
+
+B1-R：
+改造成单泛型参数（事件 struct 即载荷 +补 typeof(T) 预测题＋演示退订
+public struct PlayerDied 
+{
+    public int Id; 
+}
+
+public struct MonsterDied
+{
+    public int id;
+}
+
+public static class EventBus<T> where T : struct
+{
+    private static Dictionary<Type, List<Delegate>> _routes = new Dictionary<Type, List<Delegate>>();
+
+    /// <summary>
+    /// 订阅
+    /// </summary>
+    /// <param name="eventType"></param>
+    /// <param name="action"></param>
+    public static void Subscribe(Action<T> handler) 
+    {
+        if (!_routes.TryGetValue(typeof(T), out var list))
+        {
+            list = new List<Delegate>();
+            _routes[typeof(T)] = list;
+        }
+
+        if (!list.Contains(handler))
+            list.Add(handler);
+    }
+
+    public static void UnSubscribe(Action<T> handler)
+    {
+        if (!_routes.TryGetValue(typeof(T), out var list))
+            return;
+
+        if (list.Contains(handler))
+        {
+            list.Remove(handler);
+            if (list.Count == 0)
+                _routes.Remove(typeof(T));
+        }
+    }
+
+    public static void Publish(in T evn)
+    {
+        if (!_routes.TryGetValue(typeof(T), out var list))
+            return;
+
+        for (int i = 0; i < list.Count; ++i)
+        {
+            ((Action<T>)list[i]).Invoke(evn);
+        }
+    }
+
+    public static void ClearAll() => _routes.Clear();
+
+    public static int RouteCount => _routes.Count;
+}
+
+
+public class TestScript : MonoBehaviour
+{
+    private PlayerDied died = new PlayerDied();
+
+    private MonsterDied monsterDied = new MonsterDied();
+
+    private void OnEnable()
+    {
+        died.Id = 12;
+
+        EventBus<PlayerDied>.Subscribe(ThePlayerIsDied);
+        EventBus<PlayerDied>.Publish(died);
+
+        EventBus<MonsterDied>.Subscribe(TheMonsterDied);
+    }
+
+    private void ThePlayerIsDied(PlayerDied player)
+    {
+        UnityEngine.Debug.Log($"player id: {player.Id} is dieth.");
+    }
+
+    private void TheMonsterDied(MonsterDied monster)
+    {
+        UnityEngine.Debug.Log($"monster id: {monster.id} is dieth.");
+    }
+
+    private void OnDisable()
+    {
+        EventBus<PlayerDied>.UnSubscribe(ThePlayerIsDied);
+        EventBus<MonsterDied>.UnSubscribe(TheMonsterDied);
+    }
+}
+
+演示 MonsterDied 订 PlayerDied 变**编译错误**的截图/报错原文：
+Assets\TestScript.cs(85,41): error CS1503: Argument 1: cannot convert from 'method group' to 'System.Action<MonsterDied>'
+
+Console 原文：
+player id: 12 is dieth.
+UnityEngine.Debug:Log (object)
+TestScript:ThePlayerIsDied (PlayerDied) (at Assets/TestScript.cs:91)
+EventBus`1<PlayerDied>:Publish (PlayerDied&) (at Assets/TestScript.cs:62)
+TestScript:OnEnable () (at Assets/TestScript.cs:83)
+
+monster id: 0 is dieth.
+UnityEngine.Debug:Log (object)
+TestScript:TheMonsterDied (MonsterDied) (at Assets/TestScript.cs:96)
+EventBus`1<MonsterDied>:Publish (MonsterDied&) (at Assets/TestScript.cs:62)
+TestScript:OnEnable () (at Assets/TestScript.cs:86)
+
+B2-R：
+public class TestScript1 : MonoBehaviour
+{
+    private int _count = 10000;
+
+    void Start()
+    {
+        CaptureMethod();
+
+        NonCaptureMethod();
+    }
+
+    private void CaptureMethod()
+    {
+        GC.Collect();
+        long begin = GC.GetTotalMemory(false);
+
+        for (int i = 0; i < _count; ++i)
+        {
+            long sink = 0, x = 10;
+            Action a = () => sink += x;
+        }
+
+        long end = GC.GetTotalMemory(false);
+
+        UnityEngine.Debug.Log("CaptureMethod 分配了：" + (end - begin) + "B");
+    }
+
+    private void NonCaptureMethod()
+    {
+        GC.Collect();
+        long begin = GC.GetTotalMemory(false);
+
+        for (int i = 0; i < _count; ++i)
+        {
+            Action a = () => { };
+            a();
+        }
+
+        long end = GC.GetTotalMemory(false);
+
+        UnityEngine.Debug.Log("NonCaptureMethod 分配了：" + (end - begin) + "B");
+    }
+}
+
+预测：880000B，实际：
+CaptureMethod 分配了：847872B
+UnityEngine.Debug:Log (object)
+TestScript1:CaptureMethod () (at Assets/TestScript1.cs:36)
+TestScript1:Start () (at Assets/TestScript1.cs:18)
+
+B3-R：
+1.添加：
+        private void OnDisable()
+        {
+            onClickEnter -= () => RaiseTrigger(InteractionTrigger.Selected);
+            onHoverEnter -= () => RaiseTrigger(InteractionTrigger.HoverEnter);
+            onHoverExit -= () => RaiseTrigger(InteractionTrigger.HoverExit);
+        }
+2.
+        private void OnDestroy()
+        {
+            RaiseTrigger(InteractionTrigger.ObjectStart);
+        }
+改为：
+        private void OnDestroy()
+        {
+            //RaiseTrigger(InteractionTrigger.ObjectStart);
+        }
+并用 A4 原理回答：**为什么匿名 lambda 连 `-=` 都做不到**（提示：每次写 `() => ...` 都是新对象）：这句话我没懂什么意思？意思事为什么不可以直接：onClickEnter -= RaiseTrigger(InteractionTrigger.Selected);？
+
+C-R：
+ 差异：
+1. 新的EventBus用了字典<Type, List<Delegate>>来保存handler，类型安全，以前的没有
+2. 新EventBus的T只要是struct就可以，以前的要IEventBus约束。
+3. 想不到了，如果你知道请补充上。
+
+保留：
+IEventBus这个约束很好，可以保留
+
+改进：
+可以给EventBus添加字典用来类型保护。
