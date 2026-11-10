@@ -1,0 +1,74 @@
+A1:
+yield return方法返回，stste 从-2变成了0或者其他正整数，然后返回。
+A2：
+yield return null 应该就是直接返回了 然后继续MoveNext
+yield return new WaitForSeconds(2f) 应该是注册了一个对象去管理他，等到2f过了之后会通知继续movenext
+因为协程在GameObject上，所以WaitForSeconds 受 Time.timeScale 的影响。
+如果想不受影响可以用async/Task或者是UniTask
+A3：
+如果一个脚本去eanble = false，对协程没有影响，因为协程是在GameObject上不是挂载到脚本上。
+如果一个脚本SetActive(false) 那么协程也会停止，因为SetActive会影响GameObject。
+如果想停止可以在StartCoroutine的时候获取一个Coroutine，然后在想停止的时候StopCoroutine。
+
+A4:
+依然放在主线程里面，大多数情况async/awiat的续体被放在了Unity的函数堆栈中等待被调用。靠Task机制，执行await的时候会注册一个Waiter，当await中的内容执行结束后，会提醒然后继续MoveNext。
+
+A5：
+UniTask本身就是一个struct，基本上在调用栈中，不会占用堆内存。
+其次他使用了池化的promise对象，大大减少了GC的分配。
+
+B1：
+有点没思路，我再想想。
+
+C1:
+1.public static void Delay(float delay, Action callback) 
+    {
+        if (delay <= 0)
+        {
+            callback?.Invoke();
+            return;
+        }
+	IsGoOn = true;
+        EnsureComponentExists();
+        _component.StartCoroutine(DelayRoutine(delay, callback, isGoOn));
+    }
+改为 
+public static void Delay(float delay, Action callback, bool isGoOn)  
+    {
+        if (delay <= 0)
+        {
+            callback?.Invoke();
+            return;
+        }
+
+        EnsureComponentExists();
+        _component.StartCoroutine(DelayRoutine(delay, callback, isGoOn));
+    }
+
+2.private static IEnumerator DelayRoutine(float delay, Action callback) 
+  {
+        yield return new WaitForSeconds(delay);
+
+        if (IsGoOn)
+        {
+            Log.cinput("red", $"Timer IsGoOn true..");
+            callback?.Invoke();
+        }
+        else
+            Log.cinput("red", $"Timer IsGoOn false..");
+    }
+改为 
+private static IEnumerator DelayRoutine(float delay, Action callback, bool isGoOn)
+    {
+        yield return new WaitForSeconds(delay);
+
+        if (isGoOn & IsGoOn)
+        {
+            Log.cinput("red", $"Timer IsGoOn true..");
+            callback?.Invoke();
+        }
+        else
+            Log.cinput("red", $"Timer IsGoOn false..");
+    }
+
+因为这个项目还是需要一个IsGoOn这样的总控开关的，但是也需要加入不同函数的灵活性。
