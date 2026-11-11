@@ -1,0 +1,187 @@
+A1: 返回一个bool和Current，条件满足后才会继续NextMove从state跳入点继续。
+A5：
+1. struct返回零堆分配
+2. 注册Waiter，完成后继续。
+UniTask事直接注入到Unity的PlayerLoop中，所以他绕过了Unity的同步上下文SynchroizationContext
+
+B:
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CoroutineDriver : MonoBehaviour
+{
+    public sealed class Handle
+    {
+        internal IEnumerator routine;
+
+        internal Handle watingHandle;
+
+        internal CoroutineDriver owner;
+
+        internal bool isRunning;
+
+        internal bool isCompleted;
+
+        internal bool waitingNextFrame;
+
+        internal float waitUntil;
+
+        internal Handle(CoroutineDriver _owner, IEnumerator _routine)
+        {
+            routine = _routine;
+            owner = _owner;
+            isRunning = true;
+        }
+    }
+
+    public sealed class Wait
+    {
+        internal float second;
+
+        public Wait(float _second)
+        {
+            second = _second;
+        }
+    }
+
+    private readonly List<Handle> _handles = new List<Handle>();
+
+    public Handle Start(IEnumerator routine)
+    {
+        if (routine == null)
+            throw new ArgumentNullException(nameof(routine));
+
+        Handle handle = new Handle(this, routine);
+        _handles.Add(handle);
+
+        return handle;
+    }
+
+    public void Stop(Handle handle)
+    {
+        if (handle == null)
+            throw new ArgumentNullException(nameof(handle));
+
+        if (handle.isCompleted) return;
+
+        Complete(handle);
+    }
+
+    public void StopAll()
+    {
+        for (int i = 0; i < _handles.Count; ++i)
+            Complete(_handles[i]);
+
+        _handles.Clear();
+    }
+
+    private void Update()
+    {
+        for (int i = _handles.Count - 1; i >= 0; --i)
+        {
+            Tick(_handles[i]);
+        }
+    }
+
+    private void Tick(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        if (handle.waitingNextFrame)
+        {
+            handle.waitingNextFrame = false;
+        }
+
+        if (handle.waitUntil > 0)
+        {
+            if (handle.waitUntil > Time.time)
+            {
+                return;
+            }
+            handle.waitUntil = 0f;
+        }
+
+        if (handle.watingHandle != null)
+        {
+            if (handle.watingHandle.isRunning)
+                return;
+
+            handle.watingHandle = null;
+        }
+
+        try
+        {
+            if (!handle.routine.MoveNext())
+            {
+                Complete(handle);
+                return;
+            }
+
+            object current = handle.routine.Current;
+            ProcessYield(handle, current);
+        }
+        catch (Exception)
+        {
+            Complete(handle);
+            throw;
+        }
+    }
+
+    private void ProcessYield(Handle handle, object current)
+    {
+        if (current == null)
+        {
+            handle.waitingNextFrame = true;
+            return;
+        }
+
+        if (current is Wait wait)
+        {
+            handle.waitUntil = Time.time + Mathf.Max(0, wait.second);
+            return;
+        }
+
+        if (current is Handle subHandle)
+        {
+            if (subHandle.owner != this || subHandle == handle)
+            {
+                return;
+            }
+
+            if (subHandle.isCompleted != true)
+            {
+                handle.watingHandle = subHandle;
+            }
+
+            return;
+        }
+
+        throw new InvalidOperationException($"不支持的 Yield 类型：{current.GetType().Name}");
+    }
+
+    private void Complete(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        handle.isCompleted = true;
+        handle.isRunning = false;
+
+        (handle.routine as IDisposable)?.Dispose();
+
+        handle.routine = null;
+        _handles.Remove(handle);
+    }
+
+    private void OnDestroy()
+    {
+        StopAll();
+    }
+
+}
+
+C2：
+我再想想
