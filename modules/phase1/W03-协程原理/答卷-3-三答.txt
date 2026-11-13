@@ -1,0 +1,397 @@
+B:
+修 Bug1/2/3 + 三个小注记自查 ：
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEditor;
+using UnityEngine;
+
+public class CoroutineDriver : MonoBehaviour
+{
+    public sealed class Handle
+    {
+        internal IEnumerator routine;
+
+        internal Handle watingHandle;
+
+        internal CoroutineDriver owner;
+
+        internal bool isRunning;
+
+        internal bool isCompleted;
+
+        internal bool waitingNextFrame;
+
+        internal float waitUntil;
+
+        internal Handle(CoroutineDriver _owner, IEnumerator _routine)
+        {
+            routine = _routine;
+            owner = _owner;
+            isRunning = true;
+        }
+    }
+
+    public sealed class Wait
+    {
+        internal float second;
+
+        public Wait(float _second)
+        {
+            second = _second;
+        }
+    }
+
+    private readonly List<Handle> _handles = new List<Handle>();
+
+    public Handle Start(IEnumerator routine)
+    {
+        if (routine == null)
+            throw new ArgumentNullException(nameof(routine));
+
+        Handle handle = new Handle(this, routine);
+        _handles.Add(handle);
+
+        return handle;
+    }
+
+    public void Stop(Handle handle)
+    {
+        if (handle == null)
+            throw new ArgumentNullException(nameof(handle));
+
+        if (handle.isCompleted) return;
+
+        if (handle.watingHandle != null)
+            Complete(handle.watingHandle);
+
+        Complete(handle);
+    }
+
+    public void StopAll()
+    {
+        int count = _handles.Count;
+        for (int i = count - 1; i >= 0; --i)
+            Complete(_handles[i]);
+
+        _handles.Clear();
+    }
+
+    private void Update()
+    {
+        for (int i = _handles.Count - 1; i >= 0; --i)
+        {
+            if (i >= _handles.Count) continue;
+
+            Tick(_handles[i]);
+        }
+    }
+
+    private void Tick(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        object current = handle.routine.Current;
+        ProcessYield(handle, current);
+
+        if (handle.waitingNextFrame)
+        {
+            handle.waitingNextFrame = false;
+            return;
+        }
+
+        if (handle.waitUntil > 0)
+        {
+            if (handle.waitUntil > Time.time)
+            {
+                return;
+            }
+            handle.waitUntil = 0f;
+        }
+
+        if (handle.watingHandle != null)
+        {
+            if (handle.watingHandle.isRunning)
+                return;
+
+            handle.watingHandle = null;
+        }
+
+        try
+        {
+            if (!handle.routine.MoveNext())
+            {
+                Complete(handle);
+                return;
+            }
+        }
+        catch (Exception)
+        {
+            Complete(handle);
+            throw;
+        }
+    }
+
+    private void ProcessYield(Handle handle, object current)
+    {
+        if (current == null)
+        {
+            handle.waitingNextFrame = true;
+            return;
+        }
+
+        if (current is Wait wait)
+        {
+            handle.waitUntil = Time.time + Mathf.Max(0, wait.second);
+            return;
+        }
+
+        if (current is Handle subHandle)
+        {
+            if (subHandle.owner != this || subHandle == handle)
+            {
+                throw new InvalidOperationException($"子协程有问题。");
+            }
+
+            if (subHandle.isCompleted != true)
+            {
+                handle.watingHandle = subHandle;
+            }
+
+            return;
+        }
+
+        throw new InvalidOperationException($"不支持的 Yield 类型：{current.GetType().Name}");
+    }
+
+    private void Complete(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        handle.isCompleted = true;
+        handle.isRunning = false;
+
+        (handle.routine as IDisposable)?.Dispose();
+
+        handle.routine = null;
+        _handles.Remove(handle);
+    }
+
+    private void OnDestroy()
+    {
+        StopAll();
+    }
+}
+
+演示：
+using System.Collections;
+using UnityEngine;
+using static CoroutineDriver;
+
+
+public class TestScript2 : MonoBehaviour
+{
+    private CoroutineDriver _driver;
+
+    private void Start()
+    {
+        _driver = GetComponent<CoroutineDriver>();
+        _driver.Start(MainRoutine());
+    }
+
+    private IEnumerator MainRoutine()
+    {
+        Debug.Log("1. 主协程开始");
+
+        // 等待下一帧
+        yield return null;
+
+        Debug.Log("2. 下一帧继续");
+
+        // 等待 1.5 秒
+        yield return new Wait(1.5f);
+
+        Debug.Log("3. 等待时间结束");
+
+        // 启动子协程
+        Handle subRoutineHandle = _driver.Start(SubRoutine());
+
+        Debug.Log("4. 等待子协程");
+
+        // 等待子协程结束
+        yield return subRoutineHandle;
+
+        Debug.Log("5. 子协程结束，主协程继续");
+    }
+
+    private IEnumerator SubRoutine()
+    {
+        Debug.Log("子协程开始");
+
+        yield return new Wait(12f);
+
+        Debug.Log("子协程结束");
+    }
+}
+
+yield return null; 没有装箱操作。current本身就是object，无类型可以装箱。handle是class直接就在堆上分配内存，也不存在装箱行为。
+
+ 对照实验我不会写，我不知道怎么测试，也不知道你要干嘛。
+
+C2:
+using UnityEngine;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+
+public struct TimerHandle
+{
+    public int id;
+
+    public TimerHandle(int _id)
+    {
+        id = _id;
+    }
+
+    public bool isVaild => id != 0;
+}
+
+public static class Timer
+{
+    private static TimerComponent _component;
+
+    private static bool _isPaused = false;
+    public static bool isPaused => _isPaused;
+
+    private static int _nextId = 0;
+
+    /// <summary>
+    /// 延迟执行一个方法
+    /// </summary>
+    public static TimerHandle Delay(float delay, Action callback)
+    {
+        EnsureComponentExists();
+
+        int id = ++_nextId;
+        TimerHandle handle = new TimerHandle(id);
+
+        _component.AddTimer(id, delay, callback);
+
+        return handle;
+    }
+
+    public static void Cancel(TimerHandle handle)
+    {
+        if (!handle.isVaild || _component == null)
+            return;
+
+        _component.CancelTimer(handle.id);
+    }
+
+    public static void PauseAll()
+    {
+        _isPaused = true;
+    }
+
+    public static void ResumeAll()
+    {
+        _isPaused = false;
+    }
+
+    private static void EnsureComponentExists()
+    {
+        if (_component == null)
+        {
+            GameObject timerObject = new GameObject("TimerService");
+            _component = timerObject.AddComponent<TimerComponent>();
+            UnityEngine.Object.DontDestroyOnLoad(timerObject);
+        }
+    }
+
+    /// <summary>
+    /// 内部组件用于在场景中承载协程
+    /// </summary>
+    private class TimerComponent : MonoBehaviour
+    {
+        private class TimeEntry
+        {
+            public int id;
+            public float remainingTime;
+            public Action callback;
+            public bool isCanceled;
+        }
+
+        private readonly List<TimeEntry> _timers = new List<TimeEntry>();
+        private readonly Dictionary<int, TimeEntry> _timerMap = new Dictionary<int, TimeEntry>();
+
+        public void AddTimer(int _id, float delay, Action _callback)
+        {
+            TimeEntry entry = new TimeEntry { id = _id, remainingTime = delay, callback = _callback, isCanceled = false };
+            _timers.Add(entry);
+            _timerMap.Add(_id, entry);
+        }
+
+        public void CancelTimer(int _id)
+        {
+            if (_timerMap.TryGetValue(_id, out TimeEntry entry))
+            {
+                entry.isCanceled = true;
+                _timerMap.Remove(_id);
+            }
+        }
+
+        private void Update()
+        {
+            if (_isPaused)
+                return;
+
+            float deltaTime = Time.deltaTime;
+            int count = _timers.Count - 1;
+
+            try
+            {
+                for (int i = count; i >= 0; --i)
+                {
+                    TimeEntry entry = _timers[i];
+
+                    if (entry.isCanceled) continue;
+
+                    entry.remainingTime -= deltaTime;
+
+                    if (entry.remainingTime <= 0.0f)
+                    {
+                        entry.isCanceled = true;
+                        _timerMap.Remove(entry.id);
+                        entry.callback?.Invoke();
+                    }
+                }
+            }
+            finally
+            {
+                for (int i = _timers.Count - 1; i >= 0; --i)
+                {
+                    TimeEntry entry = _timers[i];
+
+                    if (entry.isCanceled)
+                    {
+                        entry.isCanceled = true;
+                        _timers.Remove(entry);
+                    }
+                }
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (_component == this)
+                _component = null;
+
+            _timers.Clear();
+            _timerMap.Clear();
+        }
+    }
+}
+
+快照vs活句柄一段话是什么东西，我不懂。
