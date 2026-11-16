@@ -1,0 +1,333 @@
+1.
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CoroutineDriver : MonoBehaviour
+{
+    public sealed class Handle
+    {
+        internal IEnumerator routine;
+
+        internal Handle waitingHandle;
+
+        internal CoroutineDriver owner;
+
+        internal bool isRunning;
+
+        internal bool isCompleted;
+
+        internal bool waitingNextFrame;
+
+        internal float waitUntil;
+
+        internal Handle(CoroutineDriver _owner, IEnumerator _routine)
+        {
+            routine = _routine;
+            owner = _owner;
+            isRunning = true;
+        }
+    }
+
+    public sealed class Wait
+    {
+        internal float second;
+
+        public Wait(float _second)
+        {
+            second = _second;
+        }
+    }
+
+    private readonly List<Handle> _handles = new List<Handle>();
+
+    public Handle Start(IEnumerator routine)
+    {
+        if (routine == null)
+            throw new ArgumentNullException(nameof(routine));
+
+        Handle handle = new Handle(this, routine);
+        _handles.Add(handle);
+
+        return handle;
+    }
+
+    public void Stop(Handle handle)
+    {
+        if (handle == null)
+            throw new ArgumentNullException(nameof(handle));
+
+        if (handle.isCompleted) return;
+
+        if (handle.waitingHandle != null)
+            Complete(handle.waitingHandle);
+
+        Complete(handle);
+    }
+
+    public void StopAll()
+    {
+        int count = _handles.Count;
+        for (int i = count - 1; i >= 0; --i)
+            Complete(_handles[i]);
+
+        _handles.Clear();
+    }
+
+    private void Update()
+    {
+        for (int i = _handles.Count - 1; i >= 0; --i)
+        {
+            if (i >= _handles.Count) continue;
+
+            Tick(_handles[i]);
+        }
+    }
+
+    private void Tick(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        //if (handle.waitingNextFrame)
+        //{
+        //    handle.waitingNextFrame = false;
+        //    return;
+        //}
+
+        if (handle.waitUntil > 0)
+        {
+            if (handle.waitUntil > Time.time)
+            {
+                return;
+            }
+            handle.waitUntil = 0f;
+        }
+
+        if (handle.waitingHandle != null)
+        {
+            if (handle.waitingHandle.isRunning)
+                return;
+
+            handle.waitingHandle = null;
+        }
+
+        try
+        {
+            if (!handle.routine.MoveNext())
+            {
+                Complete(handle);
+                return;
+            }
+
+            object current = handle.routine.Current;
+            ProcessYield(handle, current);
+        }
+        catch (Exception)
+        {
+            Complete(handle);
+            throw;
+        }
+    }
+
+    private void ProcessYield(Handle handle, object current)
+    {
+        if (current == null)
+        {
+            //handle.waitingNextFrame = true;
+            return;
+        }
+
+        if (current is Wait wait)
+        {
+            handle.waitUntil = Time.time + Mathf.Max(0, wait.second);
+            return;
+        }
+
+        if (current is Handle subHandle)
+        {
+            if (subHandle.owner != this || subHandle == handle)
+            {
+                throw new InvalidOperationException($"子协程有问题。");
+            }
+
+            if (subHandle.isCompleted != true)
+            {
+                handle.waitingHandle = subHandle;
+            }
+
+            return;
+        }
+
+        throw new InvalidOperationException($"不支持的 Yield 类型：{current.GetType().Name}");
+    }
+
+    private void Complete(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        handle.isCompleted = true;
+        handle.isRunning = false;
+
+        (handle.routine as IDisposable)?.Dispose();
+
+        handle.routine = null;
+        _handles.Remove(handle);
+    }
+
+    private void OnDestroy()
+    {
+        StopAll();
+    }
+}
+
+2.
+还是用这个脚本跑：
+using System.Collections;
+using UnityEngine;
+using static CoroutineDriver;
+
+
+public class TestScript2 : MonoBehaviour
+{
+    private CoroutineDriver _driver;
+
+    private void Start()
+    {
+        _driver = GetComponent<CoroutineDriver>();
+        _driver.Start(DIYSample());
+        //StartCoroutine(Sample());
+    }
+
+    private IEnumerator MainRoutine()
+    {
+        Debug.Log("1. 主协程开始");
+
+        // 等待下一帧
+        yield return null;
+
+        Debug.Log("2. 下一帧继续");
+
+        // 等待 1.5 秒
+        yield return new Wait(1.5f);
+
+        Debug.Log("3. 等待时间结束");
+
+        // 启动子协程
+        Handle subRoutineHandle = _driver.Start(SubRoutine());
+
+        Debug.Log("4. 等待子协程");
+
+        // 等待子协程结束
+        yield return subRoutineHandle;
+
+        Debug.Log("5. 子协程结束，主协程继续");
+    }
+
+    private IEnumerator SubRoutine()
+    {
+        Debug.Log("子协程开始");
+
+        yield return new Wait(12f);
+
+        Debug.Log("子协程结束");
+    }
+
+    IEnumerator Sample()
+    {
+        Debug.Log($"开始 frame={Time.frameCount}");
+        yield return null;
+        Debug.Log($"null恢复 frame={Time.frameCount}");
+        yield return new WaitForSeconds(1f);
+        Debug.Log($"秒恢复 frame={Time.frameCount}");
+    }
+
+    IEnumerator DIYSample()
+    {
+        Debug.Log($"DIY 开始 frame={Time.frameCount}");
+        yield return null;
+        Debug.Log($"DIY null恢复 frame={Time.frameCount}");
+        yield return new Wait(1f);
+        Debug.Log($"DIY 秒恢复 frame={Time.frameCount}");
+    }
+}
+自己的：
+DIY 开始 frame=1
+DIY null恢复 frame=2
+DIY 秒恢复 frame=155
+原生：
+开始 frame=1
+null恢复 frame=2
+秒恢复 frame=131
+
+3.
+测试：分别创建了GO1,GO2：
+using System.Collections;
+using UnityEngine;
+
+public class GO1 : MonoBehaviour
+{
+    // Start is called once before the first execution of Update after the MonoBehaviour is created
+    void Start()
+    {
+        StartCoroutine(Sample());
+        StopAllCoroutines();
+    }   
+
+    // Update is called once per frame
+    void Update()
+    {
+        
+    }
+
+    IEnumerator Sample()
+    {
+        Debug.Log($"GO1_开始 frame={Time.frameCount}");
+        yield return null;
+        Debug.Log($"GO1_null恢复 frame={Time.frameCount}");
+        yield return new WaitForSeconds(1f);
+        Debug.Log($"GO1_秒恢复 frame={Time.frameCount}");
+    }
+}
+
+using System.Collections;
+using UnityEngine;
+
+public class GO2 : MonoBehaviour
+{
+    // Start is called once before the first execution of Update after the MonoBehaviour is created
+    void Start()
+    {
+        StartCoroutine(Sample());
+    }
+
+    // Update is called once per frame
+    void Update()
+    {
+        
+    }
+
+    IEnumerator Sample()
+    {
+        Debug.Log($"GO2_开始 frame={Time.frameCount}");
+        yield return null;
+        Debug.Log($"GO2_null恢复 frame={Time.frameCount}");
+        yield return new WaitForSeconds(1f);
+        Debug.Log($"GO2_秒恢复 frame={Time.frameCount}");
+    }
+}
+测试结果为：
+GO1_开始 frame=1
+GO2_开始 frame=1
+GO2_null恢复 frame=2
+GO2_秒恢复 frame=142
+确实是这样如果两个GameObject引用了同一个CoroutineDriver，其中一个GameObject调用StopAll都会停止，所有最好用一个池子动态创建CoroutineDriver，当一个GameObject需要使用的时候创建使用，用完之后回归池子，每个GameObject的CoroutineDriver最好互不干扰。
+
+4. 见目录文件diff截图
+
+5.
+C1 的 bool 在 开始 时刻被 使用，之后外界再翻转它，协程里看到的是 最初的调用时的布尔值（W1 副本语义）
+C2 的 TimerHandle 里只有一个 ID，到点时刻 Timer 拿它去 TimerEntry 问"我还活着吗"——状态是 isCanceled为true说明已经取消，isCanceled为false且remainingTime大于0说明还活着 的（W2 scope：控制认归属）
+所以"1.9 秒时想取消"：C1 为什么像对着照片喊话，C2 为什么像掐掉一根还连着电路的线

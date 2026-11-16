@@ -1,0 +1,529 @@
+B:
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CoroutineDriver : MonoBehaviour
+{
+    public sealed class Handle
+    {
+        internal IEnumerator routine;
+
+        internal Handle watingHandle;
+
+        internal CoroutineDriver owner;
+
+        internal bool isRunning;
+
+        internal bool isCompleted;
+
+        internal bool waitingNextFrame;
+
+        internal float waitUntil;
+
+        internal Handle(CoroutineDriver _owner, IEnumerator _routine)
+        {
+            routine = _routine;
+            owner = _owner;
+            isRunning = true;
+        }
+    }
+
+    public sealed class Wait
+    {
+        internal float second;
+
+        public Wait(float _second)
+        {
+            second = _second;
+        }
+    }
+
+    private readonly List<Handle> _handles = new List<Handle>();
+
+    public Handle Start(IEnumerator routine)
+    {
+        if (routine == null)
+            throw new ArgumentNullException(nameof(routine));
+
+        Handle handle = new Handle(this, routine);
+        _handles.Add(handle);
+
+        return handle;
+    }
+
+    public void Stop(Handle handle)
+    {
+        if (handle == null)
+            throw new ArgumentNullException(nameof(handle));
+
+        if (handle.isCompleted) return;
+
+        if (handle.watingHandle != null)
+            Complete(handle.watingHandle);
+
+        Complete(handle);
+    }
+
+    public void StopAll()
+    {
+        int count = _handles.Count;
+        for (int i = count - 1; i >= 0; --i)
+            Complete(_handles[i]);
+
+        _handles.Clear();
+    }
+
+    private void Update()
+    {
+        for (int i = _handles.Count - 1; i >= 0; --i)
+        {
+            if (i >= _handles.Count) continue;
+
+            Tick(_handles[i]);
+        }
+    }
+
+    private void Tick(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        if (handle.waitingNextFrame)
+        {
+            handle.waitingNextFrame = false;
+            return;
+        }
+
+        if (handle.waitUntil > 0)
+        {
+            if (handle.waitUntil > Time.time)
+            {
+                return;
+            }
+            handle.waitUntil = 0f;
+        }
+
+        if (handle.watingHandle != null)
+        {
+            if (handle.watingHandle.isRunning)
+                return;
+
+            handle.watingHandle = null;
+        }
+
+        try
+        {
+            if (!handle.routine.MoveNext())
+            {
+                Complete(handle);
+                return;
+            }
+
+            object current = handle.routine.Current;
+            ProcessYield(handle, current);
+        }
+        catch (Exception)
+        {
+            Complete(handle);
+            throw;
+        }
+    }
+
+    private void ProcessYield(Handle handle, object current)
+    {
+        if (current == null)
+        {
+            handle.waitingNextFrame = true;
+            return;
+        }
+
+        if (current is Wait wait)
+        {
+            handle.waitUntil = Time.time + Mathf.Max(0, wait.second);
+            return;
+        }
+
+        if (current is Handle subHandle)
+        {
+            if (subHandle.owner != this || subHandle == handle)
+            {
+                throw new InvalidOperationException($"子协程有问题。");
+            }
+
+            if (subHandle.isCompleted != true)
+            {
+                handle.watingHandle = subHandle;
+            }
+
+            return;
+        }
+
+        throw new InvalidOperationException($"不支持的 Yield 类型：{current.GetType().Name}");
+    }
+
+    private void Complete(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        handle.isCompleted = true;
+        handle.isRunning = false;
+
+        (handle.routine as IDisposable)?.Dispose();
+
+        handle.routine = null;
+        _handles.Remove(handle);
+    }
+
+    private void OnDestroy()
+    {
+        StopAll();
+    }
+}
+
+我用这个脚本来测试：
+using System.Collections;
+using UnityEngine;
+using static CoroutineDriver;
+
+
+public class TestScript2 : MonoBehaviour
+{
+    private CoroutineDriver _driver;
+
+    private void Start()
+    {
+        _driver = GetComponent<CoroutineDriver>();
+        _driver.Start(MainRoutine());
+    }
+
+    private IEnumerator MainRoutine()
+    {
+        Debug.Log("1. 主协程开始");
+
+        // 等待下一帧
+        yield return null;
+
+        Debug.Log("2. 下一帧继续");
+
+        // 等待 1.5 秒
+        yield return new Wait(1.5f);
+
+        Debug.Log("3. 等待时间结束");
+
+        // 启动子协程
+        Handle subRoutineHandle = _driver.Start(SubRoutine());
+
+        Debug.Log("4. 等待子协程");
+
+        // 等待子协程结束
+        yield return subRoutineHandle;
+
+        Debug.Log("5. 子协程结束，主协程继续");
+    }
+
+    private IEnumerator SubRoutine()
+    {
+        Debug.Log("子协程开始");
+
+        yield return new Wait(12f);
+
+        Debug.Log("子协程结束");
+    }
+}
+
+Console：
+1. 主协程开始
+UnityEngine.Debug:Log (object)
+TestScript2/<MainRoutine>d__2:MoveNext () (at Assets/TestScript2.cs:18)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/CoroutineDriver.cs:83)
+2. 下一帧继续
+UnityEngine.Debug:Log (object)
+TestScript2/<MainRoutine>d__2:MoveNext () (at Assets/TestScript2.cs:23)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/CoroutineDriver.cs:83)
+3. 等待时间结束
+UnityEngine.Debug:Log (object)
+TestScript2/<MainRoutine>d__2:MoveNext () (at Assets/TestScript2.cs:28)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/CoroutineDriver.cs:83)
+4. 等待子协程
+UnityEngine.Debug:Log (object)
+TestScript2/<MainRoutine>d__2:MoveNext () (at Assets/TestScript2.cs:33)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/CoroutineDriver.cs:83)
+子协程开始
+UnityEngine.Debug:Log (object)
+TestScript2/<SubRoutine>d__3:MoveNext () (at Assets/TestScript2.cs:43)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/CoroutineDriver.cs:83)
+
+以上这些是11:03:15
+
+子协程结束
+UnityEngine.Debug:Log (object)
+TestScript2/<SubRoutine>d__3:MoveNext () (at Assets/TestScript2.cs:47)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/CoroutineDriver.cs:83)
+5. 子协程结束，主协程继续
+UnityEngine.Debug:Log (object)
+TestScript2/<MainRoutine>d__2:MoveNext () (at Assets/TestScript2.cs:38)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/CoroutineDriver.cs:83)
+
+这些是11:03:27
+
+关于对比：
+using System.Collections;
+using UnityEngine;
+using static CoroutineDriver;
+
+
+public class TestScript2 : MonoBehaviour
+{
+    private CoroutineDriver _driver;
+
+    private void Start()
+    {
+        _driver = GetComponent<CoroutineDriver>();
+        _driver.Start(DIYSample());
+        //StartCoroutine(Sample());
+    }
+
+    private IEnumerator MainRoutine()
+    {
+        Debug.Log("1. 主协程开始");
+
+        // 等待下一帧
+        yield return null;
+
+        Debug.Log("2. 下一帧继续");
+
+        // 等待 1.5 秒
+        yield return new Wait(1.5f);
+
+        Debug.Log("3. 等待时间结束");
+
+        // 启动子协程
+        Handle subRoutineHandle = _driver.Start(SubRoutine());
+
+        Debug.Log("4. 等待子协程");
+
+        // 等待子协程结束
+        yield return subRoutineHandle;
+
+        Debug.Log("5. 子协程结束，主协程继续");
+    }
+
+    private IEnumerator SubRoutine()
+    {
+        Debug.Log("子协程开始");
+
+        yield return new Wait(12f);
+
+        Debug.Log("子协程结束");
+    }
+
+    IEnumerator Sample()
+    {
+        Debug.Log($"开始 frame={Time.frameCount}");
+        yield return null;
+        Debug.Log($"null恢复 frame={Time.frameCount}");
+        yield return new WaitForSeconds(1f);
+        Debug.Log($"秒恢复 frame={Time.frameCount}");
+    }
+
+    IEnumerator DIYSample()
+    {
+        Debug.Log($"DIY 开始 frame={Time.frameCount}");
+        yield return null;
+        Debug.Log($"DIY null恢复 frame={Time.frameCount}");
+        yield return new Wait(1f);
+        Debug.Log($"DIY 秒恢复 frame={Time.frameCount}");
+    }
+}
+我用该脚本测试：
+自己写的：
+DIY 开始 frame=1
+DIY null恢复 frame=3
+DIY 秒恢复 frame=154
+原生的：
+开始 frame=1
+null恢复 frame=2
+秒恢复 frame=167
+差别：
+1.在处理yield reutrn null; 原生当前帧就可以处理，我的因为Tick和ProcessYield的设计问题要到下一帧才开始处理。
+2.在WaitForSeconds这个功能中，我的总是比原生的快几帧，其中的原因可能是因为我用的是Time.time导致的？
+3. 目前没有找到第三点。
+
+C2:
+我贴给你的就是直接改的项目里面的，所以不需要真文件落地 + git diff
+拼写已修改：
+using UnityEngine;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+
+public struct TimerHandle
+{
+    public int id;
+
+    public TimerHandle(int _id)
+    {
+        id = _id;
+    }
+
+    public bool isValid => id != 0;
+}
+
+public static class Timer
+{
+    private static TimerComponent _component;
+
+    private static bool _isPaused = false;
+    public static bool isPaused => _isPaused;
+
+    private static int _nextId = 0;
+
+    /// <summary>
+    /// 延迟执行一个方法
+    /// </summary>
+    public static TimerHandle Delay(float delay, Action callback)
+    {
+        EnsureComponentExists();
+
+        int id = ++_nextId;
+        TimerHandle handle = new TimerHandle(id);
+
+        _component.AddTimer(id, delay, callback);
+
+        return handle;
+    }
+
+    public static void Cancel(TimerHandle handle)
+    {
+        if (!handle.isValid || _component == null)
+            return;
+
+        _component.CancelTimer(handle.id);
+    }
+
+    public static void PauseAll()
+    {
+        _isPaused = true;
+    }
+
+    public static void ResumeAll()
+    {
+        _isPaused = false;
+    }
+
+    private static void EnsureComponentExists()
+    {
+        if (_component == null)
+        {
+            GameObject timerObject = new GameObject("TimerService");
+            _component = timerObject.AddComponent<TimerComponent>();
+            UnityEngine.Object.DontDestroyOnLoad(timerObject);
+        }
+    }
+
+    /// <summary>
+    /// 内部组件用于在场景中承载协程
+    /// </summary>
+    private class TimerComponent : MonoBehaviour
+    {
+        private class TimerEntry
+        {
+            public int id;
+            public float remainingTime;
+            public Action callback;
+            public bool isCanceled;
+        }
+
+        private readonly List<TimerEntry> _timers = new List<TimerEntry>();
+        private readonly Dictionary<int, TimerEntry> _timerMap = new Dictionary<int, TimerEntry>();
+
+        public void AddTimer(int _id, float delay, Action _callback)
+        {
+            TimerEntry entry = new TimerEntry { id = _id, remainingTime = delay, callback = _callback, isCanceled = false };
+            _timers.Add(entry);
+            _timerMap.Add(_id, entry);
+        }
+
+        public void CancelTimer(int _id)
+        {
+            if (_timerMap.TryGetValue(_id, out TimerEntry entry))
+            {
+                entry.isCanceled = true;
+                _timerMap.Remove(_id);
+            }
+        }
+
+        private void Update()
+        {
+            if (_isPaused)
+                return;
+
+            float deltaTime = Time.deltaTime;
+            int count = _timers.Count - 1;
+
+            try
+            {
+                for (int i = count; i >= 0; --i)
+                {
+                    TimerEntry entry = _timers[i];
+
+                    if (entry.isCanceled) continue;
+
+                    entry.remainingTime -= deltaTime;
+
+                    if (entry.remainingTime <= 0.0f)
+                    {
+                        entry.isCanceled = true;
+                        _timerMap.Remove(entry.id);
+                        entry.callback?.Invoke();
+                    }
+                }
+            }
+            finally
+            {
+                for (int i = _timers.Count - 1; i >= 0; --i)
+                {
+                    TimerEntry entry = _timers[i];
+
+                    if (entry.isCanceled)
+                    {
+                        entry.isCanceled = true;
+                        _timers.Remove(entry);
+                    }
+                }
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (_component == this)
+                _component = null;
+
+            _timers.Clear();
+            _timerMap.Clear();
+        }
+    }
+}
+
+
+我写的第一版：
+// C1（快照）：bool 在调用瞬间被复制，之后外界改什么都与协程无关
+Timer.Delay(2f, cb, isGoOn: true);   // 传参那一刻就定死了
+
+// C2（活句柄）：id 是钥匙，到点时刻才去注册表查"我还活着吗"
+var h = Timer.Delay(2f, cb);
+Timer.Cancel(h);                      // 1.9 秒时取消，依然有效
+
+第二版的区别：
+1.用句柄控制更加灵活，可以在执行中打断，第一个就不行
+2. 第一个内部用的yield return new WaitForSecond() WaitForSecond是一个class会增加堆内存，我用的是update计数而且我的TimerHandle用的struct所以是0堆内存
