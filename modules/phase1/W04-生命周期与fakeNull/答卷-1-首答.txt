@@ -1,0 +1,764 @@
+B0:
+1. 你想问的是为什么触发一个条件就返回吗？因为ProcessYield中的current是IEnumerator的Current传的参数，所以我们可以根据Current当前的状态来判断这个协程的状态，从而做到精准的卡住条件返回，做到只处理当次的产出。
+2. 
+首先这个是Timer的所有代码：
+using UnityEngine;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+
+public struct TimerHandle
+{
+    public int id;
+
+    public TimerHandle(int _id)
+    {
+        id = _id;
+    }
+
+    public bool isValid => id != 0;
+}
+
+public static class Timer
+{
+    private static TimerComponent _component;
+
+    private static bool _isPaused = false;
+    public static bool isPaused => _isPaused;
+
+    private static int _nextId = 0;
+
+    /// <summary>
+    /// 延迟执行一个方法
+    /// </summary>
+    public static TimerHandle Delay(float delay, Action callback)
+    {
+        EnsureComponentExists();
+
+        int id = ++_nextId;
+        TimerHandle handle = new TimerHandle(id);
+
+        _component.AddTimer(id, delay, callback);
+
+        return handle;
+    }
+
+    public static void Cancel(TimerHandle handle)
+    {
+        if (!handle.isValid || _component == null)
+            return;
+
+        _component.CancelTimer(handle.id);
+    }
+
+    public static void PauseAll()
+    {
+        _isPaused = true;
+    }
+
+    public static void ResumeAll()
+    {
+        _isPaused = false;
+    }
+
+    private static void EnsureComponentExists()
+    {
+        if (_component == null)
+        {
+            GameObject timerObject = new GameObject("TimerService");
+            _component = timerObject.AddComponent<TimerComponent>();
+            UnityEngine.Object.DontDestroyOnLoad(timerObject);
+        }
+    }
+
+    /// <summary>
+    /// 内部组件用于在场景中承载协程
+    /// </summary>
+    private class TimerComponent : MonoBehaviour
+    {
+        private class TimerEntry
+        {
+            public int id;
+            public float remainingTime;
+            public Action callback;
+            public bool isCanceled;
+        }
+
+        private readonly List<TimerEntry> _timers = new List<TimerEntry>();
+        private readonly Dictionary<int, TimerEntry> _timerMap = new Dictionary<int, TimerEntry>();
+
+        public void AddTimer(int _id, float delay, Action _callback)
+        {
+            TimerEntry entry = new TimerEntry { id = _id, remainingTime = delay, callback = _callback, isCanceled = false };
+            _timers.Add(entry);
+            _timerMap.Add(_id, entry);
+        }
+
+        public void CancelTimer(int _id)
+        {
+            if (_timerMap.TryGetValue(_id, out TimerEntry entry))
+            {
+                entry.isCanceled = true;
+                _timerMap.Remove(_id);
+            }
+        }
+
+        private void Update()
+        {
+            if (_isPaused)
+                return;
+
+            float deltaTime = Time.deltaTime;
+            int count = _timers.Count - 1;
+
+            try
+            {
+                for (int i = count; i >= 0; --i)
+                {
+                    TimerEntry entry = _timers[i];
+
+                    if (entry.isCanceled) continue;
+
+                    entry.remainingTime -= deltaTime;
+
+                    if (entry.remainingTime <= 0.0f)
+                    {
+                        entry.isCanceled = true;
+                        _timerMap.Remove(entry.id);
+                        entry.callback?.Invoke();
+                    }
+                }
+            }
+            finally
+            {
+                for (int i = _timers.Count - 1; i >= 0; --i)
+                {
+                    TimerEntry entry = _timers[i];
+
+                    if (entry.isCanceled)
+                    {
+                        entry.isCanceled = true;
+                        _timers.Remove(entry);
+                    }
+                }
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (_component == this)
+                _component = null;
+
+            _timers.Clear();
+            _timerMap.Clear();
+        }
+    }
+}
+你的问题：① Cancel 的守卫是不是 !handle.IsValid（没有 ! 会怎样）
+我写的很清楚   
+ public static void Cancel(TimerHandle handle)
+    {
+        if (!handle.isValid || _component == null)
+            return;
+
+        _component.CancelTimer(handle.id);
+    }
+如果没有!那么id有可能传入0，那么后面的CancelTimer函数就会取查找不存在的id，会有报错。
+你的问题② Update 里是不是 if (!_paused) return;（写反了会怎样）？
+我的回答是，不是，我写的是       
+ if (_isPaused)
+            return;
+如果写反了变成 if (!_isPaused) return; 项目中isPaused的作用是停止所有协程的人物在Timer中，所以如果写反了，那么开发者想让协程都停下但是并没有停下，造成不确定的报错。
+3.DIY 驱动器 12 秒等待中途 Stop 的 Console 一条：
+根据要求，我修改了脚本：
+using System.Collections;
+using UnityEngine;
+using static CoroutineDriver;
+
+
+public class TestScript2 : MonoBehaviour
+{
+    private CoroutineDriver _driver;
+
+    private Handle _mainHandle;
+
+    private float _stopTime = 0.0f;
+
+    private void Start()
+    {
+        _driver = GetComponent<CoroutineDriver>();
+        //_driver.Start(DIYSample());
+        _mainHandle = _driver.Start(MainRoutine());
+        //StartCoroutine(Sample());
+    }
+
+    private void Update()
+    {
+        _stopTime += Time.deltaTime;
+
+        if (_stopTime >= 5.0f && _mainHandle != null)
+        {
+            Debug.Log("Stop Coroutine..");
+            _driver.Stop(_mainHandle);
+        }
+    }
+
+    private IEnumerator MainRoutine()
+    {
+        Debug.Log("1. 主协程开始");
+
+        // 等待下一帧
+        yield return null;
+
+        Debug.Log("2. 下一帧继续");
+
+        // 等待 1.5 秒
+        yield return new Wait(1.5f);
+
+        Debug.Log("3. 等待时间结束");
+
+        // 启动子协程
+        Handle subRoutineHandle = _driver.Start(SubRoutine());
+
+        Debug.Log("4. 等待子协程");
+
+        // 等待子协程结束
+        yield return subRoutineHandle;
+
+        Debug.Log("5. 子协程结束，主协程继续");
+    }
+
+    private IEnumerator SubRoutine()
+    {
+        Debug.Log("子协程开始");
+
+        yield return new Wait(12f);
+
+        Debug.Log("子协程结束");
+    }
+
+    IEnumerator Sample()
+    {
+        Debug.Log($"开始 frame={Time.frameCount}");
+        yield return null;
+        Debug.Log($"null恢复 frame={Time.frameCount}");
+        yield return new WaitForSeconds(1f);
+        Debug.Log($"秒恢复 frame={Time.frameCount}");
+    }
+
+    IEnumerator DIYSample()
+    {
+        Debug.Log($"DIY 开始 frame={Time.frameCount}");
+        yield return null;
+        Debug.Log($"DIY null恢复 frame={Time.frameCount}");
+        yield return new Wait(1f);
+        Debug.Log($"DIY 秒恢复 frame={Time.frameCount}");
+    }
+}
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CoroutineDriver : MonoBehaviour
+{
+    public sealed class Handle
+    {
+        internal IEnumerator routine;
+
+        internal Handle waitingHandle;
+
+        internal CoroutineDriver owner;
+
+        internal bool isRunning;
+
+        internal bool isCompleted;
+
+        internal bool waitingNextFrame;
+
+        internal float waitUntil;
+
+        internal Handle(CoroutineDriver _owner, IEnumerator _routine)
+        {
+            routine = _routine;
+            owner = _owner;
+            isRunning = true;
+        }
+    }
+
+    public sealed class Wait
+    {
+        internal float second;
+
+        public Wait(float _second)
+        {
+            second = _second;
+        }
+    }
+
+    private readonly List<Handle> _handles = new List<Handle>();
+
+    public Handle Start(IEnumerator routine)
+    {
+        if (routine == null)
+            throw new ArgumentNullException(nameof(routine));
+
+        Handle handle = new Handle(this, routine);
+        _handles.Add(handle);
+
+        return handle;
+    }
+
+    public void Stop(Handle handle)
+    {
+        if (handle == null)
+            throw new ArgumentNullException(nameof(handle));
+
+        if (handle.isCompleted) return;
+
+        if (handle.waitingHandle != null)
+            Complete(handle.waitingHandle);
+
+        Complete(handle);
+    }
+
+    public void StopAll()
+    {
+        int count = _handles.Count;
+        for (int i = count - 1; i >= 0; --i)
+            Complete(_handles[i]);
+
+        _handles.Clear();
+    }
+
+    private void Update()
+    {
+        for (int i = _handles.Count - 1; i >= 0; --i)
+        {
+            if (i >= _handles.Count) continue;
+
+            Tick(_handles[i]);
+        }
+    }
+
+    private void Tick(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        //if (handle.waitingNextFrame)
+        //{
+        //    handle.waitingNextFrame = false;
+        //    return;
+        //}
+
+        if (handle.waitUntil > 0)
+        {
+            if (handle.waitUntil > Time.time)
+            {
+                return;
+            }
+            handle.waitUntil = 0f;
+        }
+
+        if (handle.waitingHandle != null)
+        {
+            if (handle.waitingHandle.isRunning)
+                return;
+
+            handle.waitingHandle = null;
+        }
+
+        try
+        {
+            if (!handle.routine.MoveNext())
+            {
+                Complete(handle);
+                return;
+            }
+
+            object current = handle.routine.Current;
+            ProcessYield(handle, current);
+        }
+        catch (Exception)
+        {
+            Complete(handle);
+            throw;
+        }
+    }
+
+    private void ProcessYield(Handle handle, object current)
+    {
+        if (current == null)
+        {
+            //handle.waitingNextFrame = true;
+            return;
+        }
+
+        if (current is Wait wait)
+        {
+            handle.waitUntil = Time.time + Mathf.Max(0, wait.second);
+            return;
+        }
+
+        if (current is Handle subHandle)
+        {
+            if (subHandle.owner != this || subHandle == handle)
+            {
+                throw new InvalidOperationException($"子协程有问题。");
+            }
+
+            if (subHandle.isCompleted != true)
+            {
+                handle.waitingHandle = subHandle;
+            }
+
+            return;
+        }
+
+        throw new InvalidOperationException($"不支持的 Yield 类型：{current.GetType().Name}");
+    }
+
+    private void Complete(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        handle.isCompleted = true;
+        handle.isRunning = false;
+
+        (handle.routine as IDisposable)?.Dispose();
+
+        handle.routine = null;
+        _handles.Remove(handle);
+    }
+
+    private void OnDestroy()
+    {
+        StopAll();
+    }
+}
+最后Play的结果是：
+
+
+1. 主协程开始
+UnityEngine.Debug:Log (object)
+TestScript2/<MainRoutine>d__5:MoveNext () (at Assets/TestScript2.cs:35)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/Scripts/W03/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/Scripts/W03/CoroutineDriver.cs:83)
+
+2. 下一帧继续
+UnityEngine.Debug:Log (object)
+TestScript2/<MainRoutine>d__5:MoveNext () (at Assets/TestScript2.cs:40)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/Scripts/W03/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/Scripts/W03/CoroutineDriver.cs:83)
+
+3. 等待时间结束
+UnityEngine.Debug:Log (object)
+TestScript2/<MainRoutine>d__5:MoveNext () (at Assets/TestScript2.cs:45)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/Scripts/W03/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/Scripts/W03/CoroutineDriver.cs:83)
+
+4. 等待子协程
+UnityEngine.Debug:Log (object)
+TestScript2/<MainRoutine>d__5:MoveNext () (at Assets/TestScript2.cs:50)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/Scripts/W03/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/Scripts/W03/CoroutineDriver.cs:83)
+
+子协程开始
+UnityEngine.Debug:Log (object)
+TestScript2/<SubRoutine>d__6:MoveNext () (at Assets/TestScript2.cs:60)
+CoroutineDriver:Tick (CoroutineDriver/Handle) (at Assets/Scripts/W03/CoroutineDriver.cs:117)
+CoroutineDriver:Update () (at Assets/Scripts/W03/CoroutineDriver.cs:83)
+
+Stop Coroutine..
+UnityEngine.Debug:Log (object)
+TestScript2:Update () (at Assets/TestScript2.cs:28)
+
+先不要管这个代码写的是不是很粗糙，但是        Debug.Log("子协程结束");没有在出现了。
+
+4.删干净驱动器里注释掉的 waitingNextFrame 尸体代码和无引用字段
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CoroutineDriver : MonoBehaviour
+{
+    public sealed class Handle
+    {
+        internal IEnumerator routine;
+
+        internal Handle waitingHandle;
+
+        internal CoroutineDriver owner;
+
+        internal bool isRunning;
+
+        internal bool isCompleted;
+
+        internal bool waitingNextFrame;
+
+        internal float waitUntil;
+
+        internal Handle(CoroutineDriver _owner, IEnumerator _routine)
+        {
+            routine = _routine;
+            owner = _owner;
+            isRunning = true;
+        }
+    }
+
+    public sealed class Wait
+    {
+        internal float second;
+
+        public Wait(float _second)
+        {
+            second = _second;
+        }
+    }
+
+    private readonly List<Handle> _handles = new List<Handle>();
+
+    public Handle Start(IEnumerator routine)
+    {
+        if (routine == null)
+            throw new ArgumentNullException(nameof(routine));
+
+        Handle handle = new Handle(this, routine);
+        _handles.Add(handle);
+
+        return handle;
+    }
+
+    public void Stop(Handle handle)
+    {
+        if (handle == null)
+            throw new ArgumentNullException(nameof(handle));
+
+        if (handle.isCompleted) return;
+
+        if (handle.waitingHandle != null)
+            Complete(handle.waitingHandle);
+
+        Complete(handle);
+    }
+
+    public void StopAll()
+    {
+        int count = _handles.Count;
+        for (int i = count - 1; i >= 0; --i)
+            Complete(_handles[i]);
+
+        _handles.Clear();
+    }
+
+    private void Update()
+    {
+        for (int i = _handles.Count - 1; i >= 0; --i)
+        {
+            if (i >= _handles.Count) continue;
+
+            Tick(_handles[i]);
+        }
+    }
+
+    private void Tick(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        if (handle.waitUntil > 0)
+        {
+            if (handle.waitUntil > Time.time)
+            {
+                return;
+            }
+            handle.waitUntil = 0f;
+        }
+
+        if (handle.waitingHandle != null)
+        {
+            if (handle.waitingHandle.isRunning)
+                return;
+
+            handle.waitingHandle = null;
+        }
+
+        try
+        {
+            if (!handle.routine.MoveNext())
+            {
+                Complete(handle);
+                return;
+            }
+
+            object current = handle.routine.Current;
+            ProcessYield(handle, current);
+        }
+        catch (Exception)
+        {
+            Complete(handle);
+            throw;
+        }
+    }
+
+    private void ProcessYield(Handle handle, object current)
+    {
+        if (current == null)
+        {
+            return;
+        }
+
+        if (current is Wait wait)
+        {
+            handle.waitUntil = Time.time + Mathf.Max(0, wait.second);
+            return;
+        }
+
+        if (current is Handle subHandle)
+        {
+            if (subHandle.owner != this || subHandle == handle)
+            {
+                throw new InvalidOperationException($"子协程有问题。");
+            }
+
+            if (subHandle.isCompleted != true)
+            {
+                handle.waitingHandle = subHandle;
+            }
+
+            return;
+        }
+
+        throw new InvalidOperationException($"不支持的 Yield 类型：{current.GetType().Name}");
+    }
+
+    private void Complete(Handle handle)
+    {
+        if (handle.isCompleted)
+            return;
+
+        handle.isCompleted = true;
+        handle.isRunning = false;
+
+        (handle.routine as IDisposable)?.Dispose();
+
+        handle.routine = null;
+        _handles.Remove(handle);
+    }
+
+    private void OnDestroy()
+    {
+        StopAll();
+    }
+}
+删干净了。
+
+A：
+A1：
+Awake， OnEnable ，Start，FixedUpdate，Update ，协程 yield null 恢复点 ，LateUpdate ，OnDisable ，OnDestroy
+FixedUpdate 可以0次或者3次在一帧中，由Time.fixedDeltaTime决定 Time.fixedDeltaTime越小越精细。
+
+A2：
+Destroy(go) 后下一行 go == null 为什么是 true，具体的就是Destroy只删除了C++ native层，但是C#层要等待GC回收。
+go?.name 会报错，因为go已经是空的了。
+Destroy 和 DestroyImmediate 的区别与使用边界？
+Destroy=帧末统一销毁（运行时唯一合法）；DestroyImmediate=立刻销毁
+
+A3：
+父物体旋转 90°，子的 localPosition 和 position 各会变吗？SetParent(p, false) 和 SetParent(p, true) 的区别？
+
+子的localPosition不变，但是position会变。
+区别在于如果为 true，则修改相对于父节点的位置、缩放和旋转，以使对象保持与之前相同的世界空间位置、旋转和缩放，反之亦然。
+
+A4：
+enabled = false：Update停止、协程继续、OnGUI隐藏
+SetActive(false)：Update停止、协程停止、OnGUI隐藏
+SetActive(false) 后 GetComponent 还能拿到组件吗?
+不可以。
+
+A5：
+确实不知道，我只知道相机跟随写到LateUpdate就对了
+
+B1：
+预测：1次，0次，20次
+我写了这样的东西方便测试：
+using System.Collections;
+using UnityEngine;
+using static CoroutineDriver;
+
+
+public class TestScript4 : MonoBehaviour
+{
+    private void Start()
+    {
+        
+    }
+
+    private void FixedUpdate()
+    {
+        Debug.Log($"Frame: {Time.frameCount}, run..");
+    }
+}
+
+默认设置：观察一帧内 FixedUpdate 次数分布，1帧1次
+Time.fixedDeltaTime = 0.5f：预测每帧几次？
+Frame: 1, run..
+UnityEngine.Debug:Log (object)
+TestScript4:FixedUpdate () (at Assets/Scripts/W04/TestScript4.cs:15)
+
+Frame: 65, run..
+UnityEngine.Debug:Log (object)
+TestScript4:FixedUpdate () (at Assets/Scripts/W04/TestScript4.cs:15)
+
+Frame: 133, run..
+UnityEngine.Debug:Log (object)
+TestScript4:FixedUpdate () (at Assets/Scripts/W04/TestScript4.cs:15)
+
+Frame: 200, run..
+UnityEngine.Debug:Log (object)
+TestScript4:FixedUpdate () (at Assets/Scripts/W04/TestScript4.cs:15)
+
+有的时候一帧都跑不了一次
+
+Time.fixedDeltaTime = 0.001f; 一帧跑了20次
+
+B2：
+预测：true, 报错，true
+using System.Collections;
+using UnityEngine;
+using static CoroutineDriver;
+
+
+public class TestScript4 : MonoBehaviour
+{
+    private void Start()
+    {
+        var go = new GameObject("t");
+        Destroy(go);
+        Debug.Log(go == null);        // 预测？
+        Debug.Log(go?.name);          // 预测？（提示：?. 不能重载）
+        Debug.Log(ReferenceEquals(go, null));  // 预测？——真实引用比较
+    }
+}
+False
+UnityEngine.Debug:Log (object)
+TestScript4:Start () (at Assets/Scripts/W04/TestScript4.cs:12)
+
+t
+UnityEngine.Debug:Log (object)
+TestScript4:Start () (at Assets/Scripts/W04/TestScript4.cs:13)
+
+False
+UnityEngine.Debug:Log (object)
+TestScript4:Start () (at Assets/Scripts/W04/TestScript4.cs:14)
+
+B3 修真 bug：SNNU E:\Project\SNNU\Assets\Game\UI\Scripts\...\UIGlowEffect.cs（搜 UIEdgeGlowEffect 类名）——类名与文件名不一致，Unity 挂不上组件。修复（F2 改名保持 meta 关联），全项目搜索引用确认，贴 git diff。没找到。
+
+B4：
+你框架 DIBootstrap 的 [DefaultExecutionOrder(-32000)] 为什么必须是 -32000 这个量级？
+这个是直接照抄的Unity VContainer的
+如果两个 Bootstrap 都标 -32000，顺序谁定？
+这个没有，当时想的是不可能再有其他脚本能超过-32000了。

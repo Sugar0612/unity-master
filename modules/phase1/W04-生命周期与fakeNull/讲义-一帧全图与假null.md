@@ -45,8 +45,10 @@ FixedUpdate **不由帧驱动，由时间累积驱动**：
 
 ```csharp
 Destroy(go);
-Debug.Log(go == null);   // true！——但托管对象还在堆上躺着
+Debug.Log(go == null);   // 帧内：false（销毁还没生效）；下一帧起：true
 ```
+
+**时序修正（2026-11-26，训练者 B2 实测纠正本讲义）**：Destroy 在**帧末**统一销毁——同帧内（比如 Start 的下一行）对象完全活着，== 仍为 false；**下一帧起** native 指针置空，== 才变 true。原版讲义漏了"帧内 vs 帧后"的时序。
 
 为什么"对象还在却等于 null"？因为 UnityEngine.Object **重载了 == 运算符**：它比较的不是 C# 引用，而是内部的 **native 指针（m_CachedPtr）**。Destroy 销毁的是 C++ 侧的 native 对象，同时把托管壳的指针置空——`==` 一看指针空了，报 null。托管壳要等 GC 才真正消失。
 
